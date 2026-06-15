@@ -69,10 +69,20 @@ export function ContactsPage() {
                     {c.notes && <p className="text-xs text-slate-400 mt-2 line-clamp-2">{c.notes}</p>}
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={() => setEditingContact(c)} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-colors">
+                    <button
+                      type="button"
+                      aria-label={`Edit ${c.name}`}
+                      onClick={() => setEditingContact(c)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                    >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => deleteContact(c.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                    <button
+                      type="button"
+                      aria-label={`Delete ${c.name}`}
+                      onClick={() => deleteContact(c.id)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>

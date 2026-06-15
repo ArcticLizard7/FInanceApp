@@ -69,6 +69,8 @@ export function KanbanPage() {
                     </span>
                   </div>
                   <button
+                    type="button"
+                    aria-label={`Add task to ${statusLabel[col.status]}`}
                     onClick={() => { setDefaultStatus(col.status); setShowAdd(true); }}
                     className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors"
                   >

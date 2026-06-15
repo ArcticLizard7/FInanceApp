@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MoreHorizontal, CheckCircle2, Circle, Calendar, User, RefreshCw, Edit2, Copy, Trash2, ListChecks } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { formatRelative, isOverdue, isDueToday } from '@/utils/dateUtils';
@@ -19,6 +19,7 @@ interface TaskCardProps {
 
 export function TaskCard({ task, onComplete, onEdit, onDelete, onDuplicate, compact = false }: TaskCardProps) {
   const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const updateTask = useTaskStore(s => s.updateTask);
   const overdue = isOverdue(task.dueDate, task.status);
   const dueToday = isDueToday(task.dueDate);
@@ -35,6 +36,19 @@ export function TaskCard({ task, onComplete, onEdit, onDelete, onDuplicate, comp
     });
   };
 
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [showMenu]);
+
   return (
     <div
       className={cn(
@@ -47,6 +61,8 @@ export function TaskCard({ task, onComplete, onEdit, onDelete, onDuplicate, comp
       <div className="flex items-start gap-3">
         {/* Completion toggle */}
         <button
+          type="button"
+          aria-label={isComplete ? `${task.title} is completed` : `Mark ${task.title} complete`}
           onClick={() => !isComplete && onComplete(task.id)}
           className={cn(
             'mt-0.5 flex-shrink-0 transition-colors',
@@ -70,10 +86,12 @@ export function TaskCard({ task, onComplete, onEdit, onDelete, onDuplicate, comp
             </p>
 
             {/* Menu */}
-            <div className="relative flex-shrink-0">
+            <div ref={menuRef} className="relative flex-shrink-0">
               <button
+                type="button"
+                aria-label={`Open actions for ${task.title}`}
+                aria-expanded={showMenu}
                 onClick={() => setShowMenu(!showMenu)}
-                onBlur={() => setTimeout(() => setShowMenu(false), 150)}
                 className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
               >
                 <MoreHorizontal className="w-4 h-4" />
@@ -86,6 +104,7 @@ export function TaskCard({ task, onComplete, onEdit, onDelete, onDuplicate, comp
                     { icon: <Trash2 className="w-3.5 h-3.5" />, label: 'Delete', action: () => onDelete(task.id), danger: true },
                   ].map(item => (
                     <button
+                      type="button"
                       key={item.label}
                       onClick={() => { item.action(); setShowMenu(false); }}
                       className={cn(

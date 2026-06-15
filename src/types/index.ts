@@ -215,6 +215,161 @@ export interface ImportSession {
 }
 
 // ============================================================
+// Personal Budget Control
+// ============================================================
+
+export interface BudgetProfile {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  name: string;
+  colour: string;
+  isDefault: boolean;
+  includeInConsolidated: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BudgetCategory {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  budgetId: string;
+  name: string;
+  colour: string;
+  keywords: string[];
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MonthlyBudget {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  budgetId: string;
+  month: string; // YYYY-MM
+  categoryId: string;
+  amount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MonthlyBudgetIncome {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  budgetId: string;
+  month: string; // YYYY-MM
+  amount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BudgetTransaction {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  budgetId: string;
+  date: string; // YYYY-MM-DD
+  description: string;
+  amount: number;
+  direction: 'payment' | 'receipt';
+  categoryId: string | null;
+  debtAllocation: {
+    action: 'new_debt' | 'increase_debt' | 'repayment';
+    debtId: string;
+    debtGroupId: string;
+    linkedRecordId: string;
+  } | null;
+  source: 'manual' | 'import';
+  importBatchId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BankStatementImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+// ============================================================
+// Personal Debt Management
+// ============================================================
+
+export type DebtAccountType =
+  | 'loan'
+  | 'credit_card'
+  | 'mortgage'
+  | 'car_finance'
+  | 'student_loan'
+  | 'overdraft'
+  | 'other';
+
+export type DebtAccountStatus = 'active' | 'settled' | 'paused';
+
+export interface DebtGroup {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  name: string;
+  colour: string;
+  isDefault: boolean;
+  includeInConsolidated: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtAccount {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  groupId: string;
+  name: string;
+  lender: string;
+  type: DebtAccountType;
+  openingBalance: number;
+  interestRate: number;
+  minimumPayment: number;
+  paymentDueDay: number | null;
+  startDate: string | null;
+  termMonths: number | null;
+  notes: string;
+  status: DebtAccountStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtRepayment {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  groupId: string;
+  debtId: string;
+  date: string;
+  amount: number;
+  notes: string;
+  sourceTransactionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtBalanceSnapshot {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  groupId: string;
+  debtId: string;
+  date: string;
+  balance: number;
+  notes: string;
+  sourceTransactionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================================
 // User Preferences
 // ============================================================
 

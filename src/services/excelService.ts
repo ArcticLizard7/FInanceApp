@@ -7,6 +7,33 @@ import { readSheet, type CellValue, type Row, type SheetData } from 'read-excel-
 import { uuidv4 } from '@/utils/id';
 import type { Task, PaymentRequest, ExcelImportRow, ColumnMapping } from '@/types';
 
+const excelSerialDateToIso = (value: number) => {
+  const utcDays = Math.floor(value - 25569);
+  const utcValue = utcDays * 86400;
+  return new Date(utcValue * 1000).toISOString().slice(0, 10);
+};
+
+const normaliseDate = (value: unknown): string | null => {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return excelSerialDateToIso(value);
+  }
+
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+};
+
+const normaliseAmount = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const cleaned = String(value).replace(/[£$,]/g, '').trim();
+  const amount = Number.parseFloat(cleaned);
+  return Number.isFinite(amount) ? amount : null;
+};
+
 export const excelService = {
   parseFile(file: File): Promise<{ sheets: string[]; rows: ExcelImportRow[]; headers: string[] }> {
     return readSheet(file)
@@ -39,6 +66,11 @@ export const excelService = {
         errors.push(`Row ${i + 2}: Missing title — skipped.`);
         return;
       }
+      const dueDate = map['dueDate'] ? normaliseDate(row[map['dueDate']]) : null;
+      if (map['dueDate'] && row[map['dueDate']] && !dueDate) {
+        errors.push(`Row ${i + 2}: Invalid due date - skipped.`);
+        return;
+      }
       tasks.push({
         id: uuidv4(),
         tenantId,
@@ -48,7 +80,7 @@ export const excelService = {
         category: 'general_admin',
         status: 'todo',
         priority: 'medium',
-        dueDate: map['dueDate'] ? String(row[map['dueDate']] ?? '') : null,
+        dueDate,
         assignedTo: null,
         assignedToName: map['assignedTo'] ? String(row[map['assignedTo']] ?? '') : null,
         assignedToEmail: null,
@@ -87,7 +119,16 @@ export const excelService = {
         errors.push(`Row ${i + 2}: Missing supplier — skipped.`);
         return;
       }
-      const amount = map['amount'] ? parseFloat(String(row[map['amount']] ?? '0')) : 0;
+      const amount = map['amount'] ? normaliseAmount(row[map['amount']]) : 0;
+      if (amount === null) {
+        errors.push(`Row ${i + 2}: Invalid net amount - skipped.`);
+        return;
+      }
+      const dueDate = map['dueDate'] ? normaliseDate(row[map['dueDate']]) : null;
+      if (map['dueDate'] && row[map['dueDate']] && !dueDate) {
+        errors.push(`Row ${i + 2}: Invalid due date - skipped.`);
+        return;
+      }
       const vat = parseFloat((amount * 0.20).toFixed(2));
 
       payments.push({
@@ -103,7 +144,7 @@ export const excelService = {
         currency,
         vatCode: 'S',
         vatBreakdown: [],
-        dueDate: map['dueDate'] ? String(row[map['dueDate']] ?? '') : new Date().toISOString(),
+        dueDate: dueDate ?? new Date().toISOString().slice(0, 10),
         requestedBy: map['requestedBy'] ? String(row[map['requestedBy']] ?? '') : '',
         approvalStatus: 'draft',
         paymentStatus: 'unpaid',

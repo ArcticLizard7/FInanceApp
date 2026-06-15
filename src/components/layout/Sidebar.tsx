@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, CheckSquare, Columns, Calendar, CreditCard,
   TrendingUp, FileSpreadsheet, Users, BarChart2, Settings,
-  Sun, ChevronLeft, ChevronRight, Building2, ShieldCheck, Globe, ClipboardList,
+  Sun, ChevronLeft, ChevronRight, Building2, ShieldCheck, Globe, ClipboardList, WalletCards, HandCoins,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -14,6 +14,7 @@ interface NavItem {
   to: string;
   icon: React.ReactNode;
   financeOnly?: boolean;
+  personalOnly?: boolean;
   adminOnly?: boolean;
   platformAdminOnly?: boolean;
 }
@@ -29,13 +30,19 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Cashflow',         to: '/cashflow',    icon: <TrendingUp className="w-4 h-4" />,     financeOnly: true },
   { label: 'Excel Import',     to: '/import',      icon: <FileSpreadsheet className="w-4 h-4" />, financeOnly: true },
   { label: 'Contacts',         to: '/contacts',    icon: <Users className="w-4 h-4" /> },
+  { label: 'Budget Control',   to: '/budget',      icon: <WalletCards className="w-4 h-4" />,    personalOnly: true },
+  { label: 'Debt Management',  to: '/debts',       icon: <HandCoins className="w-4 h-4" />,      personalOnly: true },
   { label: 'Reports',          to: '/reports',     icon: <BarChart2 className="w-4 h-4" /> },
   { label: 'Settings',         to: '/settings',    icon: <Settings className="w-4 h-4" /> },
   // Tenant admin section
   { label: 'Tenant Admin',     to: '/admin',       icon: <ShieldCheck className="w-4 h-4" />,    adminOnly: true },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ onNavigate }: SidebarProps) {
   const { activeWorkspace, preferences, updatePreferences } = useWorkspaceStore();
   const { currentUser, activeTenantId } = useAuthStore();
   const navigate = useNavigate();
@@ -43,6 +50,7 @@ export function Sidebar() {
   const collapsed       = preferences.sidebarCollapsed;
   const workspaceColour = activeWorkspace?.colour ?? '#6366f1';
   const hideFinance     = activeWorkspace?.hideFinanceFeatures ?? false;
+  const isPersonal      = activeWorkspace?.type === 'personal';
   const isAdmin         = currentUser ? isTenantAdmin(currentUser.role) : false;
   const isPlatformAdmin = currentUser?.role === 'platform_admin';
 
@@ -55,7 +63,7 @@ export function Sidebar() {
       )}>
         <div
           className="flex items-center gap-3 px-4 h-16 border-b border-slate-100 cursor-pointer select-none"
-          onClick={() => navigate('/platform')}
+          onClick={() => { navigate('/platform'); onNavigate?.(); }}
         >
           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-bold text-sm bg-purple-600">
             FF
@@ -66,7 +74,7 @@ export function Sidebar() {
           <NavLink to="/platform" className={({ isActive }) => cn(
             'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors my-0.5',
             isActive ? 'bg-purple-600 text-white' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
-          )}>
+          )} onClick={onNavigate}>
             <Globe className="w-4 h-4" />
             {!collapsed && <span>Platform Admin</span>}
           </NavLink>
@@ -83,6 +91,7 @@ export function Sidebar() {
 
   const visibleItems = NAV_ITEMS.filter(item => {
     if (item.financeOnly && hideFinance) return false;
+    if (item.personalOnly && !isPersonal) return false;
     if (item.adminOnly && !isAdmin)      return false;
     return true;
   });
@@ -95,7 +104,7 @@ export function Sidebar() {
       {/* Logo */}
       <div
         className="flex items-center gap-3 px-4 h-16 border-b border-slate-100 cursor-pointer select-none"
-        onClick={() => navigate('/dashboard')}
+        onClick={() => { navigate('/dashboard'); onNavigate?.(); }}
       >
         <div
           className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-bold text-sm"
@@ -113,7 +122,7 @@ export function Sidebar() {
         <div
           className="mx-3 mt-3 mb-1 px-3 py-2 rounded-lg flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
           style={{ backgroundColor: workspaceColour + '15' }}
-          onClick={() => navigate('/settings?tab=workspaces')}
+          onClick={() => { navigate('/settings?tab=workspaces'); onNavigate?.(); }}
           title="Switch company"
         >
           <Building2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: workspaceColour }} />
@@ -129,6 +138,7 @@ export function Sidebar() {
         {isPlatformAdmin && (
           <NavLink
             to="/platform"
+            onClick={onNavigate}
             className={({ isActive }) => cn(
               'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors my-0.5 mb-2',
               isActive ? 'bg-purple-600 text-white' : 'text-purple-600 hover:bg-purple-50'
@@ -144,6 +154,7 @@ export function Sidebar() {
             key={item.to}
             to={item.to}
             title={collapsed ? item.label : undefined}
+            onClick={onNavigate}
             className={({ isActive }) => cn(
               'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors my-0.5',
               item.adminOnly && 'mt-3 border-t border-slate-100 pt-3',

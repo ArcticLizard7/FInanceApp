@@ -11,6 +11,7 @@ import type { ExcelImportRow, ColumnMapping } from '@/types';
 import { cn } from '@/utils/cn';
 
 type ImportStep = 'upload' | 'map' | 'preview' | 'done';
+type MappingKind = 'tasks' | 'payments';
 
 const TASK_FIELDS = [
   { value: 'title',        label: 'Title' },
@@ -43,7 +44,8 @@ export function ExcelImportPage() {
   const [headers, setHeaders] = useState<string[]>([]);
   const [fileName, setFileName] = useState('');
   const [importType, setImportType] = useState<'tasks' | 'payments' | 'both'>('tasks');
-  const [mappings, setMappings] = useState<ColumnMapping[]>([]);
+  const [taskMappings, setTaskMappings] = useState<ColumnMapping[]>([]);
+  const [paymentMappings, setPaymentMappings] = useState<ColumnMapping[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState(0);
@@ -52,7 +54,27 @@ export function ExcelImportPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const wsId = activeWorkspace?.id ?? '';
 
-  const fields = importType === 'payments' ? PAYMENT_FIELDS : TASK_FIELDS;
+  const mappingSections: { kind: MappingKind; title: string; fields: typeof TASK_FIELDS }[] = [
+    ...(importType === 'tasks' || importType === 'both'
+      ? [{ kind: 'tasks' as const, title: 'Task Columns', fields: TASK_FIELDS }]
+      : []),
+    ...(importType === 'payments' || importType === 'both'
+      ? [{ kind: 'payments' as const, title: 'Payment Columns', fields: PAYMENT_FIELDS }]
+      : []),
+  ];
+
+  const autoMap = (fields: typeof TASK_FIELDS, detectedHeaders: string[]) =>
+    fields.map(f => ({
+      sourceColumn: detectedHeaders.find(c => {
+        const source = c.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const target = f.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const label = f.label.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return source.includes(target) || target.includes(source) || source.includes(label) || label.includes(source);
+      }) ?? '',
+      targetField: f.value,
+    }));
+
+  const getMappings = (kind: MappingKind) => kind === 'tasks' ? taskMappings : paymentMappings;
 
   const handleFile = async (file: File) => {
     try {
@@ -60,12 +82,8 @@ export function ExcelImportPage() {
       setRows(r);
       setHeaders(h);
       setFileName(file.name);
-      // Auto-map by matching header names
-      const autoMappings = fields.map(f => ({
-        sourceColumn: h.find(c => c.toLowerCase().includes(f.value.toLowerCase()) || f.value.toLowerCase().includes(c.toLowerCase())) ?? '',
-        targetField: f.value,
-      }));
-      setMappings(autoMappings);
+      setTaskMappings(autoMap(TASK_FIELDS, h));
+      setPaymentMappings(autoMap(PAYMENT_FIELDS, h));
       setStep('map');
     } catch (e) {
       setErrors([(e as Error).message]);
@@ -79,8 +97,9 @@ export function ExcelImportPage() {
     if (file) handleFile(file);
   };
 
-  const updateMapping = (targetField: string, sourceColumn: string) => {
-    setMappings(prev => prev.map(m => m.targetField === targetField ? { ...m, sourceColumn } : m));
+  const updateMapping = (kind: MappingKind, targetField: string, sourceColumn: string) => {
+    const setter = kind === 'tasks' ? setTaskMappings : setPaymentMappings;
+    setter(prev => prev.map(m => m.targetField === targetField ? { ...m, sourceColumn } : m));
   };
 
   const handleImport = async () => {
@@ -89,14 +108,14 @@ export function ExcelImportPage() {
     let count = 0;
 
     if (importType === 'tasks' || importType === 'both') {
-      const { tasks, errors: te } = excelService.rowsToTasks(rows, mappings, wsId, activeTenantId ?? '');
+      const { tasks, errors: te } = excelService.rowsToTasks(rows, taskMappings, wsId, activeTenantId ?? '');
       errs.push(...te);
       importTasks(tasks);
       count += tasks.length;
     }
 
     if (importType === 'payments' || importType === 'both') {
-      const { payments, errors: pe } = excelService.rowsToPayments(rows, mappings, wsId, activeTenantId ?? '', activeWorkspace?.currency ?? 'GBP');
+      const { payments, errors: pe } = excelService.rowsToPayments(rows, paymentMappings, wsId, activeTenantId ?? '', activeWorkspace?.currency ?? 'GBP');
       errs.push(...pe);
       importPayments(payments);
       count += payments.length;
@@ -200,18 +219,25 @@ export function ExcelImportPage() {
                 <h2 className="text-sm font-semibold text-slate-700">Map Columns</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Match your spreadsheet columns to the import fields</p>
               </div>
-              <div className="p-5 space-y-3">
-                {fields.map(f => (
-                  <div key={f.value} className="flex items-center gap-4">
-                    <div className="w-44 text-sm font-medium text-slate-700 flex-shrink-0">{f.label}</div>
-                    <ArrowRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
-                    <Select
-                      value={mappings.find(m => m.targetField === f.value)?.sourceColumn ?? ''}
-                      onChange={e => updateMapping(f.value, e.target.value)}
-                      options={headers.map(h => ({ value: h, label: h }))}
-                      placeholder="— Not mapped —"
-                      className="flex-1"
-                    />
+              <div className="p-5 space-y-6">
+                {mappingSections.map(section => (
+                  <div key={section.kind} className="space-y-3">
+                    {importType === 'both' && (
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{section.title}</h3>
+                    )}
+                    {section.fields.map(f => (
+                      <div key={`${section.kind}-${f.value}`} className="flex items-center gap-4">
+                        <div className="w-44 text-sm font-medium text-slate-700 flex-shrink-0">{f.label}</div>
+                        <ArrowRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        <Select
+                          value={getMappings(section.kind).find(m => m.targetField === f.value)?.sourceColumn ?? ''}
+                          onChange={e => updateMapping(section.kind, f.value, e.target.value)}
+                          options={headers.map(h => ({ value: h, label: h }))}
+                          placeholder="- Not mapped -"
+                          className="flex-1"
+                        />
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -229,34 +255,49 @@ export function ExcelImportPage() {
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-slate-100 shadow-card overflow-hidden">
               <div className="px-5 py-3 bg-slate-50 border-b border-slate-100">
-                <h2 className="text-sm font-semibold text-slate-700">Preview — first 5 rows</h2>
+                <h2 className="text-sm font-semibold text-slate-700">Preview - first 5 rows</h2>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100">
-                      {fields.filter(f => mappings.find(m => m.targetField === f.value)?.sourceColumn).map(f => (
-                        <th key={f.value} className="px-4 py-2 text-left text-slate-500 font-semibold uppercase tracking-wide whitespace-nowrap">
-                          {f.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {rows.slice(0, 5).map((row, i) => (
-                      <tr key={i}>
-                        {fields.filter(f => mappings.find(m => m.targetField === f.value)?.sourceColumn).map(f => {
-                          const col = mappings.find(m => m.targetField === f.value)?.sourceColumn ?? '';
-                          return (
-                            <td key={f.value} className="px-4 py-2 text-slate-700 whitespace-nowrap max-w-xs truncate">
-                              {col ? String(row[col] ?? '—') : '—'}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {mappingSections.map(section => {
+                  const mappedFields = section.fields.filter(f =>
+                    getMappings(section.kind).find(m => m.targetField === f.value)?.sourceColumn
+                  );
+
+                  return (
+                    <div key={section.kind} className="min-w-full">
+                      {importType === 'both' && (
+                        <h3 className="px-4 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {section.title}
+                        </h3>
+                      )}
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-100">
+                            {mappedFields.map(f => (
+                              <th key={f.value} className="px-4 py-2 text-left text-slate-500 font-semibold uppercase tracking-wide whitespace-nowrap">
+                                {f.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {rows.slice(0, 5).map((row, i) => (
+                            <tr key={i}>
+                              {mappedFields.map(f => {
+                                const col = getMappings(section.kind).find(m => m.targetField === f.value)?.sourceColumn ?? '';
+                                return (
+                                  <td key={f.value} className="px-4 py-2 text-slate-700 whitespace-nowrap max-w-xs truncate">
+                                    {col ? String(row[col] ?? '-') : '-'}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -289,7 +330,15 @@ export function ExcelImportPage() {
 
             <Button
               className="mt-6"
-              onClick={() => { setStep('upload'); setRows([]); setHeaders([]); setErrors([]); setImported(0); }}
+              onClick={() => {
+                setStep('upload');
+                setRows([]);
+                setHeaders([]);
+                setTaskMappings([]);
+                setPaymentMappings([]);
+                setErrors([]);
+                setImported(0);
+              }}
             >
               Import Another File
             </Button>
