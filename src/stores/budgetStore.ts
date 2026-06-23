@@ -2,6 +2,23 @@ import { create } from 'zustand';
 import { uuidv4 } from '@/utils/id';
 import { storage } from '@/services/storageService';
 import { useAuthStore } from '@/stores/authStore';
+import { useSupabaseBackend } from '@/config/runtime';
+import { requireSupabase } from '@/services/supabaseClient';
+import {
+  budgetCategoryFromRow,
+  budgetCategoryToInsert,
+  budgetCategoryUpdatesToRow,
+  budgetProfileFromRow,
+  budgetProfileToInsert,
+  budgetProfileUpdatesToRow,
+  budgetTransactionFromRow,
+  budgetTransactionToInsert,
+  budgetTransactionUpdatesToRow,
+  monthlyBudgetFromRow,
+  monthlyBudgetIncomeFromRow,
+  monthlyBudgetIncomeToInsert,
+  monthlyBudgetToInsert,
+} from '@/services/supabaseMappers';
 import type {
   BankStatementImportResult,
   BudgetCategory,
@@ -37,7 +54,7 @@ interface BudgetStore {
   budgets: MonthlyBudget[];
   incomes: MonthlyBudgetIncome[];
   transactions: BudgetTransaction[];
-  init: () => void;
+  init: () => Promise<void> | void;
   getWorkspaceProfiles: (workspaceId: string) => BudgetProfile[];
   addProfile: (workspaceId: string, name: string) => BudgetProfile;
   updateProfile: (id: string, updates: Partial<Pick<BudgetProfile, 'name' | 'colour' | 'includeInConsolidated'>>) => void;
@@ -193,7 +210,46 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
   incomes: [],
   transactions: [],
 
-  init() {
+  async init() {
+    if (useSupabaseBackend) {
+      const { activeTenantId } = useAuthStore.getState();
+      if (!activeTenantId) {
+        set({ profiles: [], categories: [], budgets: [], incomes: [], transactions: [] });
+        return;
+      }
+
+      const supabase = requireSupabase();
+      const [
+        { data: profileRows, error: profileError },
+        { data: categoryRows, error: categoryError },
+        { data: budgetRows, error: budgetError },
+        { data: incomeRows, error: incomeError },
+        { data: transactionRows, error: transactionError },
+      ] = await Promise.all([
+        supabase.from('budget_profiles').select('*').eq('tenant_id', activeTenantId).order('created_at'),
+        supabase.from('budget_categories').select('*').eq('tenant_id', activeTenantId).order('name'),
+        supabase.from('monthly_budgets').select('*').eq('tenant_id', activeTenantId).order('month'),
+        supabase.from('monthly_budget_income').select('*').eq('tenant_id', activeTenantId).order('month'),
+        supabase.from('budget_transactions').select('*').eq('tenant_id', activeTenantId).order('date', { ascending: false }),
+      ]);
+
+      const error = profileError || categoryError || budgetError || incomeError || transactionError;
+      if (error) {
+        console.error('Failed to load budgets', error);
+        set({ profiles: [], categories: [], budgets: [], incomes: [], transactions: [] });
+        return;
+      }
+
+      set({
+        profiles: (profileRows ?? []).map(budgetProfileFromRow),
+        categories: (categoryRows ?? []).map(budgetCategoryFromRow),
+        budgets: (budgetRows ?? []).map(monthlyBudgetFromRow),
+        incomes: (incomeRows ?? []).map(monthlyBudgetIncomeFromRow),
+        transactions: (transactionRows ?? []).map(budgetTransactionFromRow),
+      });
+      return;
+    }
+
     const transactions = storage.get<BudgetTransaction[]>(TRANSACTIONS_KEY, []).map(transaction => ({
       ...transaction,
       direction: transaction.direction ?? 'payment',
@@ -241,11 +297,17 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
           : transaction
       );
 
-      storage.set(PROFILES_KEY, allProfiles);
-      storage.set(CATEGORIES_KEY, categories);
-      storage.set(BUDGETS_KEY, budgets);
-      storage.set(INCOME_KEY, incomes);
-      storage.set(TRANSACTIONS_KEY, transactions);
+      if (useSupabaseBackend) {
+        requireSupabase().from('budget_profiles').insert(budgetProfileToInsert(defaultProfile)).then(({ error }) => {
+          if (error) console.error('Failed to create default budget profile', error);
+        });
+      } else {
+        storage.set(PROFILES_KEY, allProfiles);
+        storage.set(CATEGORIES_KEY, categories);
+        storage.set(BUDGETS_KEY, budgets);
+        storage.set(INCOME_KEY, incomes);
+        storage.set(TRANSACTIONS_KEY, transactions);
+      }
       set({ profiles: allProfiles, categories, budgets, incomes, transactions });
     }
 
@@ -262,8 +324,24 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
         makeCategory(workspaceId, profile.id, activeTenantId ?? '', { ...category, isDefault: true })
       ),
     ];
-    storage.set(PROFILES_KEY, profiles);
-    storage.set(CATEGORIES_KEY, categories);
+    if (useSupabaseBackend) {
+      const createdCategories = categories.filter(category => category.budgetId === profile.id);
+      requireSupabase()
+        .from('budget_profiles')
+        .insert(budgetProfileToInsert(profile))
+        .then(({ error }) => {
+          if (error) console.error('Failed to create budget profile', error);
+        });
+      requireSupabase()
+        .from('budget_categories')
+        .insert(createdCategories.map(budgetCategoryToInsert))
+        .then(({ error }) => {
+          if (error) console.error('Failed to create default budget categories', error);
+        });
+    } else {
+      storage.set(PROFILES_KEY, profiles);
+      storage.set(CATEGORIES_KEY, categories);
+    }
     set({ profiles, categories });
     return profile;
   },
@@ -279,7 +357,13 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
           }
         : profile
     );
-    storage.set(PROFILES_KEY, profiles);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_profiles').update(budgetProfileUpdatesToRow(updates)).eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to update budget profile', error);
+      });
+    } else {
+      storage.set(PROFILES_KEY, profiles);
+    }
     set({ profiles });
   },
 
@@ -292,11 +376,17 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
     const budgets = get().budgets.filter(item => item.budgetId !== id);
     const incomes = get().incomes.filter(item => item.budgetId !== id);
     const transactions = get().transactions.filter(item => item.budgetId !== id);
-    storage.set(PROFILES_KEY, profiles);
-    storage.set(CATEGORIES_KEY, categories);
-    storage.set(BUDGETS_KEY, budgets);
-    storage.set(INCOME_KEY, incomes);
-    storage.set(TRANSACTIONS_KEY, transactions);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_profiles').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete budget profile', error);
+      });
+    } else {
+      storage.set(PROFILES_KEY, profiles);
+      storage.set(CATEGORIES_KEY, categories);
+      storage.set(BUDGETS_KEY, budgets);
+      storage.set(INCOME_KEY, incomes);
+      storage.set(TRANSACTIONS_KEY, transactions);
+    }
     set({ profiles, categories, budgets, incomes, transactions });
   },
 
@@ -313,7 +403,16 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
         makeCategory(workspaceId, budgetId, activeTenantId, { ...category, isDefault: true })
       );
       const next = [...get().categories, ...categories];
-      storage.set(CATEGORIES_KEY, next);
+      if (useSupabaseBackend) {
+        requireSupabase()
+          .from('budget_categories')
+          .insert(categories.map(budgetCategoryToInsert))
+          .then(({ error }) => {
+            if (error) console.error('Failed to create default budget categories', error);
+          });
+      } else {
+        storage.set(CATEGORIES_KEY, next);
+      }
       set({ categories: next });
     } else if (workspaceId && budgetId && activeTenantId) {
       const existingNames = new Set(categories.map(category => category.name.toLowerCase()));
@@ -324,7 +423,16 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
         );
         categories = [...categories, ...additions];
         const next = [...get().categories, ...additions];
-        storage.set(CATEGORIES_KEY, next);
+        if (useSupabaseBackend) {
+          requireSupabase()
+            .from('budget_categories')
+            .insert(additions.map(budgetCategoryToInsert))
+            .then(({ error }) => {
+              if (error) console.error('Failed to add missing budget categories', error);
+            });
+        } else {
+          storage.set(CATEGORIES_KEY, next);
+        }
         set({ categories: next });
       }
     }
@@ -397,7 +505,13 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
     const { activeTenantId } = useAuthStore.getState();
     const category = makeCategory(workspaceId, budgetId, activeTenantId ?? '', data);
     const categories = [...get().categories, category];
-    storage.set(CATEGORIES_KEY, categories);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_categories').insert(budgetCategoryToInsert(category)).then(({ error }) => {
+        if (error) console.error('Failed to create budget category', error);
+      });
+    } else {
+      storage.set(CATEGORIES_KEY, categories);
+    }
     set({ categories });
     return category;
   },
@@ -414,7 +528,18 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
           }
         : category
     );
-    storage.set(CATEGORIES_KEY, categories);
+    if (useSupabaseBackend) {
+      const updated = categories.find(category => category.id === id);
+      requireSupabase()
+        .from('budget_categories')
+        .update(budgetCategoryUpdatesToRow(updated ?? updates))
+        .eq('id', id)
+        .then(({ error }) => {
+          if (error) console.error('Failed to update budget category', error);
+        });
+    } else {
+      storage.set(CATEGORIES_KEY, categories);
+    }
     set({ categories });
   },
 
@@ -424,9 +549,15 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
     const transactions = get().transactions.map(transaction =>
       transaction.categoryId === id ? { ...transaction, categoryId: null, updatedAt: nowIso() } : transaction
     );
-    storage.set(CATEGORIES_KEY, categories);
-    storage.set(BUDGETS_KEY, budgets);
-    storage.set(TRANSACTIONS_KEY, transactions);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_categories').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete budget category', error);
+      });
+    } else {
+      storage.set(CATEGORIES_KEY, categories);
+      storage.set(BUDGETS_KEY, budgets);
+      storage.set(TRANSACTIONS_KEY, transactions);
+    }
     set({ categories, budgets, transactions });
   },
 
@@ -451,7 +582,24 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
             updatedAt: nowIso(),
           },
         ];
-    storage.set(BUDGETS_KEY, budgets);
+    if (useSupabaseBackend) {
+      const budget = budgets.find(item =>
+        item.workspaceId === workspaceId &&
+        item.budgetId === budgetId &&
+        item.month === month &&
+        item.categoryId === categoryId
+      );
+      if (budget) {
+        requireSupabase()
+          .from('monthly_budgets')
+          .upsert(monthlyBudgetToInsert(budget), { onConflict: 'budget_id,month,category_id' })
+          .then(({ error }) => {
+            if (error) console.error('Failed to save monthly budget', error);
+          });
+      }
+    } else {
+      storage.set(BUDGETS_KEY, budgets);
+    }
     set({ budgets });
   },
 
@@ -475,7 +623,21 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
             updatedAt: nowIso(),
           },
         ];
-    storage.set(INCOME_KEY, incomes);
+    if (useSupabaseBackend) {
+      const income = incomes.find(item =>
+        item.workspaceId === workspaceId && item.budgetId === budgetId && item.month === month
+      );
+      if (income) {
+        requireSupabase()
+          .from('monthly_budget_income')
+          .upsert(monthlyBudgetIncomeToInsert(income), { onConflict: 'budget_id,month' })
+          .then(({ error }) => {
+            if (error) console.error('Failed to save monthly budget income', error);
+          });
+      }
+    } else {
+      storage.set(INCOME_KEY, incomes);
+    }
     set({ incomes });
   },
 
@@ -491,7 +653,13 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
       updatedAt: nowIso(),
     };
     const transactions = [...get().transactions, transaction];
-    storage.set(TRANSACTIONS_KEY, transactions);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_transactions').insert(budgetTransactionToInsert(transaction)).then(({ error }) => {
+        if (error) console.error('Failed to create budget transaction', error);
+      });
+    } else {
+      storage.set(TRANSACTIONS_KEY, transactions);
+    }
     set({ transactions });
     return transaction;
   },
@@ -500,13 +668,25 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
     const transactions = get().transactions.map(transaction =>
       transaction.id === id ? { ...transaction, ...updates, updatedAt: nowIso() } : transaction
     );
-    storage.set(TRANSACTIONS_KEY, transactions);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_transactions').update(budgetTransactionUpdatesToRow(updates)).eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to update budget transaction', error);
+      });
+    } else {
+      storage.set(TRANSACTIONS_KEY, transactions);
+    }
     set({ transactions });
   },
 
   deleteTransaction(id) {
     const transactions = get().transactions.filter(transaction => transaction.id !== id);
-    storage.set(TRANSACTIONS_KEY, transactions);
+    if (useSupabaseBackend) {
+      requireSupabase().from('budget_transactions').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete budget transaction', error);
+      });
+    } else {
+      storage.set(TRANSACTIONS_KEY, transactions);
+    }
     set({ transactions });
   },
 
@@ -567,7 +747,16 @@ export const useBudgetStore = create<BudgetStore>((set, get) => ({
     });
 
     const transactions = [...get().transactions, ...importedTransactions];
-    storage.set(TRANSACTIONS_KEY, transactions);
+    if (useSupabaseBackend) {
+      requireSupabase()
+        .from('budget_transactions')
+        .insert(importedTransactions.map(budgetTransactionToInsert))
+        .then(({ error }) => {
+          if (error) console.error('Failed to import budget transactions', error);
+        });
+    } else {
+      storage.set(TRANSACTIONS_KEY, transactions);
+    }
     set({ transactions });
 
     return {

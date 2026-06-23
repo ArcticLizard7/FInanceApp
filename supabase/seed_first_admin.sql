@@ -68,6 +68,7 @@ begin
     name,
     type,
     colour,
+    currency,
     is_default,
     hide_finance_features
   ) values (
@@ -76,6 +77,7 @@ begin
     'Main Workspace',
     'company',
     '#6366f1',
+    'GBP',
     true,
     false
   );

@@ -468,6 +468,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         import('@/stores/paymentStore').then(m => m.usePaymentStore.getState().init()),
         import('@/stores/contactStore').then(m => m.useContactStore.getState().init()),
         import('@/stores/notificationStore').then(m => m.useNotificationStore.getState().init()),
+        import('@/stores/budgetStore').then(m => m.useBudgetStore.getState().init()),
+        import('@/stores/debtStore').then(m => m.useDebtStore.getState().init()),
       ]).catch(error => console.error('Failed to load tenant context', error));
     }
   },
@@ -482,6 +484,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       import('@/stores/paymentStore').then(m => m.usePaymentStore.setState({ payments: [] }));
       import('@/stores/contactStore').then(m => m.useContactStore.setState({ contacts: [] }));
       import('@/stores/notificationStore').then(m => m.useNotificationStore.setState({ notifications: [] }));
+      import('@/stores/budgetStore').then(m => m.useBudgetStore.setState({ profiles: [], categories: [], budgets: [], incomes: [], transactions: [] }));
+      import('@/stores/debtStore').then(m => m.useDebtStore.setState({ groups: [], accounts: [], repayments: [], balances: [] }));
     }
   },
 

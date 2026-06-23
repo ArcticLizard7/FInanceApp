@@ -111,6 +111,8 @@ export default function App() {
   const initBudgets       = useBudgetStore(s => s.init);
   const initDebts         = useDebtStore(s => s.init);
   const isInitialised     = useAuthStore(s => s.isInitialised);
+  const currentUser       = useAuthStore(s => s.currentUser);
+  const activeTenantId    = useAuthStore(s => s.activeTenantId);
 
   useEffect(() => {
     const stopNumberInputWheel = () => {
@@ -125,20 +127,60 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Auth + tenants must complete before other stores (they depend on tenantId context)
-    initAuth().then(async () => {
-      await initTenants();
-      await initWorkspace();
-      await Promise.all([
-        initTasks(),
-        initPayments(),
-        initNotifications(),
-        initContacts(),
-        initBudgets(),
-        initDebts(),
-      ]);
-    });
-  }, []);
+    initAuth();
+  }, [initAuth]);
+
+  useEffect(() => {
+    if (!isInitialised || !currentUser) {
+      return;
+    }
+
+    if (currentUser.role === 'platform_admin' && !activeTenantId) {
+      initTenants();
+      return;
+    }
+
+    if (activeTenantId) {
+      // Tenants and workspaces must complete before other stores; they depend on tenant context.
+      (async () => {
+        await initTenants();
+        await initWorkspace();
+        await Promise.all([
+          initTasks(),
+          initPayments(),
+          initNotifications(),
+          initContacts(),
+          initBudgets(),
+          initDebts(),
+        ]);
+      })();
+    }
+  }, [
+    activeTenantId,
+    currentUser,
+    initBudgets,
+    initContacts,
+    initDebts,
+    initNotifications,
+    initPayments,
+    initTasks,
+    initTenants,
+    initWorkspace,
+    isInitialised,
+  ]);
+
+  useEffect(() => {
+    if (!isInitialised || currentUser) return;
+
+    useTenantStore.setState({ tenants: [], isInitialised: true });
+    useWorkspaceStore.setState({ workspaces: [], activeWorkspace: null });
+    useTaskStore.setState({ tasks: [] });
+    usePaymentStore.setState({ payments: [] });
+    useNotificationStore.setState({ notifications: [] });
+    useContactStore.setState({ contacts: [] });
+    useBudgetStore.setState({ profiles: [], categories: [], budgets: [], incomes: [], transactions: [] });
+    useDebtStore.setState({ groups: [], accounts: [], repayments: [], balances: [] });
+  }, [currentUser, isInitialised]);
 
   if (!isInitialised) {
     return (

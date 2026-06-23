@@ -6,7 +6,7 @@ A full-stack productivity and finance management web app for a Finance Manager i
 
 ## Prerequisites
 
-1. **Node.js v18 or later** — download from https://nodejs.org/en/download
+1. **Node.js v22.12.0 or later** — download from https://nodejs.org/en/download
    - Choose the Windows Installer (.msi) — LTS version recommended
    - During installation, ensure "Add to PATH" is checked
 2. **Restart your terminal** after Node.js installs

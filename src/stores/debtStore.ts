@@ -2,6 +2,20 @@ import { create } from 'zustand';
 import { uuidv4 } from '@/utils/id';
 import { storage } from '@/services/storageService';
 import { useAuthStore } from '@/stores/authStore';
+import { useSupabaseBackend } from '@/config/runtime';
+import { requireSupabase } from '@/services/supabaseClient';
+import {
+  debtAccountFromRow,
+  debtAccountToInsert,
+  debtAccountUpdatesToRow,
+  debtBalanceSnapshotFromRow,
+  debtBalanceSnapshotToInsert,
+  debtGroupFromRow,
+  debtGroupToInsert,
+  debtGroupUpdatesToRow,
+  debtRepaymentFromRow,
+  debtRepaymentToInsert,
+} from '@/services/supabaseMappers';
 import type {
   DebtAccount,
   DebtBalanceSnapshot,
@@ -19,7 +33,7 @@ interface DebtStore {
   accounts: DebtAccount[];
   repayments: DebtRepayment[];
   balances: DebtBalanceSnapshot[];
-  init: () => void;
+  init: () => Promise<void> | void;
   getWorkspaceGroups: (workspaceId: string) => DebtGroup[];
   addGroup: (workspaceId: string, name: string) => DebtGroup;
   updateGroup: (id: string, updates: Partial<Pick<DebtGroup, 'name' | 'colour' | 'includeInConsolidated'>>) => void;
@@ -57,7 +71,43 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
   repayments: [],
   balances: [],
 
-  init() {
+  async init() {
+    if (useSupabaseBackend) {
+      const { activeTenantId } = useAuthStore.getState();
+      if (!activeTenantId) {
+        set({ groups: [], accounts: [], repayments: [], balances: [] });
+        return;
+      }
+
+      const supabase = requireSupabase();
+      const [
+        { data: groupRows, error: groupError },
+        { data: accountRows, error: accountError },
+        { data: repaymentRows, error: repaymentError },
+        { data: balanceRows, error: balanceError },
+      ] = await Promise.all([
+        supabase.from('debt_groups').select('*').eq('tenant_id', activeTenantId).order('created_at'),
+        supabase.from('debt_accounts').select('*').eq('tenant_id', activeTenantId).order('name'),
+        supabase.from('debt_repayments').select('*').eq('tenant_id', activeTenantId).order('date', { ascending: false }),
+        supabase.from('debt_balance_snapshots').select('*').eq('tenant_id', activeTenantId).order('date', { ascending: false }),
+      ]);
+
+      const error = groupError || accountError || repaymentError || balanceError;
+      if (error) {
+        console.error('Failed to load debts', error);
+        set({ groups: [], accounts: [], repayments: [], balances: [] });
+        return;
+      }
+
+      set({
+        groups: (groupRows ?? []).map(debtGroupFromRow),
+        accounts: (accountRows ?? []).map(debtAccountFromRow),
+        repayments: (repaymentRows ?? []).map(debtRepaymentFromRow),
+        balances: (balanceRows ?? []).map(debtBalanceSnapshotFromRow),
+      });
+      return;
+    }
+
     set({
       groups: storage.get<DebtGroup[]>(GROUPS_KEY, []),
       accounts: storage.get<DebtAccount[]>(ACCOUNTS_KEY, []),
@@ -88,10 +138,16 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
         balance.workspaceId === workspaceId && !balance.groupId ? { ...balance, groupId: defaultGroup.id } : balance
       );
 
-      storage.set(GROUPS_KEY, allGroups);
-      storage.set(ACCOUNTS_KEY, accounts);
-      storage.set(REPAYMENTS_KEY, repayments);
-      storage.set(BALANCES_KEY, balances);
+      if (useSupabaseBackend) {
+        requireSupabase().from('debt_groups').insert(debtGroupToInsert(defaultGroup)).then(({ error }) => {
+          if (error) console.error('Failed to create default debt group', error);
+        });
+      } else {
+        storage.set(GROUPS_KEY, allGroups);
+        storage.set(ACCOUNTS_KEY, accounts);
+        storage.set(REPAYMENTS_KEY, repayments);
+        storage.set(BALANCES_KEY, balances);
+      }
       set({ groups: allGroups, accounts, repayments, balances });
     }
 
@@ -102,7 +158,13 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
     const { activeTenantId } = useAuthStore.getState();
     const group = makeGroup(workspaceId, activeTenantId ?? '', name || 'New Debt Group');
     const groups = [...get().groups, group];
-    storage.set(GROUPS_KEY, groups);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_groups').insert(debtGroupToInsert(group)).then(({ error }) => {
+        if (error) console.error('Failed to create debt group', error);
+      });
+    } else {
+      storage.set(GROUPS_KEY, groups);
+    }
     set({ groups });
     return group;
   },
@@ -113,7 +175,13 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
         ? { ...group, ...updates, name: updates.name ?? group.name, updatedAt: nowIso() }
         : group
     );
-    storage.set(GROUPS_KEY, groups);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_groups').update(debtGroupUpdatesToRow(updates)).eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to update debt group', error);
+      });
+    } else {
+      storage.set(GROUPS_KEY, groups);
+    }
     set({ groups });
   },
 
@@ -125,10 +193,16 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
     const accounts = get().accounts.filter(account => account.groupId !== id);
     const repayments = get().repayments.filter(repayment => !accountIds.includes(repayment.debtId));
     const balances = get().balances.filter(balance => !accountIds.includes(balance.debtId));
-    storage.set(GROUPS_KEY, groups);
-    storage.set(ACCOUNTS_KEY, accounts);
-    storage.set(REPAYMENTS_KEY, repayments);
-    storage.set(BALANCES_KEY, balances);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_groups').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete debt group', error);
+      });
+    } else {
+      storage.set(GROUPS_KEY, groups);
+      storage.set(ACCOUNTS_KEY, accounts);
+      storage.set(REPAYMENTS_KEY, repayments);
+      storage.set(BALANCES_KEY, balances);
+    }
     set({ groups, accounts, repayments, balances });
   },
 
@@ -165,7 +239,13 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
       updatedAt: nowIso(),
     };
     const accounts = [...get().accounts, account];
-    storage.set(ACCOUNTS_KEY, accounts);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_accounts').insert(debtAccountToInsert(account)).then(({ error }) => {
+        if (error) console.error('Failed to create debt account', error);
+      });
+    } else {
+      storage.set(ACCOUNTS_KEY, accounts);
+    }
     set({ accounts });
     return account;
   },
@@ -174,7 +254,13 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
     const accounts = get().accounts.map(account =>
       account.id === id ? { ...account, ...updates, updatedAt: nowIso() } : account
     );
-    storage.set(ACCOUNTS_KEY, accounts);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_accounts').update(debtAccountUpdatesToRow(updates)).eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to update debt account', error);
+      });
+    } else {
+      storage.set(ACCOUNTS_KEY, accounts);
+    }
     set({ accounts });
   },
 
@@ -182,9 +268,15 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
     const accounts = get().accounts.filter(account => account.id !== id);
     const repayments = get().repayments.filter(repayment => repayment.debtId !== id);
     const balances = get().balances.filter(balance => balance.debtId !== id);
-    storage.set(ACCOUNTS_KEY, accounts);
-    storage.set(REPAYMENTS_KEY, repayments);
-    storage.set(BALANCES_KEY, balances);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_accounts').delete().eq('id', id).then(({ error }) => {
+        if (error) console.error('Failed to delete debt account', error);
+      });
+    } else {
+      storage.set(ACCOUNTS_KEY, accounts);
+      storage.set(REPAYMENTS_KEY, repayments);
+      storage.set(BALANCES_KEY, balances);
+    }
     set({ accounts, repayments, balances });
   },
 
@@ -201,7 +293,13 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
       updatedAt: nowIso(),
     };
     const repayments = [...get().repayments, repayment];
-    storage.set(REPAYMENTS_KEY, repayments);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_repayments').insert(debtRepaymentToInsert(repayment)).then(({ error }) => {
+        if (error) console.error('Failed to create debt repayment', error);
+      });
+    } else {
+      storage.set(REPAYMENTS_KEY, repayments);
+    }
     set({ repayments });
     return repayment;
   },
@@ -219,7 +317,13 @@ export const useDebtStore = create<DebtStore>((set, get) => ({
       updatedAt: nowIso(),
     };
     const balances = [...get().balances, snapshot];
-    storage.set(BALANCES_KEY, balances);
+    if (useSupabaseBackend) {
+      requireSupabase().from('debt_balance_snapshots').insert(debtBalanceSnapshotToInsert(snapshot)).then(({ error }) => {
+        if (error) console.error('Failed to create debt balance snapshot', error);
+      });
+    } else {
+      storage.set(BALANCES_KEY, balances);
+    }
     set({ balances });
     return snapshot;
   },

@@ -8,6 +8,7 @@ This app is currently a local-first productivity app. For real online use, do no
 - Backend/auth/database: Supabase
 - Build command: `npm run build`
 - Publish directory: `dist`
+- Node version: `22.12.0` or newer
 
 ## 1. Create Supabase Project
 
