@@ -47,13 +47,26 @@ Deno.serve(async req => {
   const body = await req.json() as Partial<CreateUserBody>;
   const authHeader = req.headers.get('Authorization');
   const accessToken = body.sessionAccessToken || authHeader?.replace(/^Bearer\s+/i, '');
+  const requestApiKey = req.headers.get('apikey') || Deno.env.get('SUPABASE_ANON_KEY');
 
   if (!accessToken) {
     return json(401, { error: 'You must be signed in to create users.' });
   }
 
+  if (!requestApiKey) {
+    return json(500, { error: 'Supabase function client key is not configured.' });
+  }
+
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const userClient = createClient(supabaseUrl, requestApiKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
   });
 
   const { data: authData, error: authError } = await adminClient.auth.getUser(accessToken);
@@ -80,7 +93,7 @@ Deno.serve(async req => {
     return json(403, { error: 'Tenant users cannot be platform administrators.' });
   }
 
-  const { data: actor, error: actorError } = await adminClient
+  const { data: actor, error: actorError } = await userClient
     .from('profiles')
     .select('*')
     .eq('id', authData.user.id)
@@ -99,6 +112,17 @@ Deno.serve(async req => {
 
   if (!isPlatformAdmin && !isTenantAdmin) {
     return json(403, { error: 'You do not have permission to create users for this tenant.' });
+  }
+
+  const { error: adminCheckError } = await adminClient.auth.admin.listUsers({
+    page: 1,
+    perPage: 1,
+  });
+
+  if (adminCheckError) {
+    return json(500, {
+      error: 'Supabase Edge Function service role key is not configured correctly. Set SUPABASE_SERVICE_ROLE_KEY to the project service_role secret.',
+    });
   }
 
   const { data: tenant, error: tenantError } = await adminClient
