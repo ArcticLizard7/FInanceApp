@@ -103,14 +103,20 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     };
     const tenants = [...get().tenants, tenant];
     if (useSupabaseBackend) {
-      const { error } = await requireSupabase()
+      const { data, error } = await requireSupabase()
         .from('tenants')
-        .insert(tenantToInsert(tenant));
+        .insert(tenantToInsert(tenant))
+        .select('*')
+        .single();
 
       if (error) {
         console.error('Failed to create tenant', error);
         throw error;
       }
+
+      const createdTenant = tenantFromRow(data);
+      set({ tenants: [...get().tenants, createdTenant] });
+      return createdTenant;
     } else {
       storage.set(K.tenants, tenants);
     }

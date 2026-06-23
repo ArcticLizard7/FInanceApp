@@ -28,6 +28,8 @@ const json = (status: number, body: Record<string, unknown>) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -125,11 +127,22 @@ Deno.serve(async req => {
     });
   }
 
-  const { data: tenant, error: tenantError } = await adminClient
-    .from('tenants')
-    .select('id, settings')
-    .eq('id', tenantId)
-    .single();
+  let tenant: { id: string; settings?: Record<string, unknown> } | null = null;
+  let tenantError: unknown = null;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const result = await adminClient
+      .from('tenants')
+      .select('id, settings')
+      .eq('id', tenantId)
+      .maybeSingle();
+
+    tenant = result.data;
+    tenantError = result.error;
+
+    if (tenant || tenantError) break;
+    await wait(250);
+  }
 
   if (tenantError || !tenant) {
     return json(404, { error: 'Tenant not found.' });

@@ -22,6 +22,9 @@ import { formatDate } from '@/utils/dateUtils';
 import type { Tenant, TenantPlan } from '@/types/tenant';
 import { PLAN_LABELS, PLAN_COLOUR, STATUS_COLOUR } from '@/types/tenant';
 import { ROLE_LABELS } from '@/types/auth';
+import { runtimeConfig, useSupabaseBackend } from '@/config/runtime';
+import { requireSupabase } from '@/services/supabaseClient';
+import { profileFromRow, tenantFromRow, workspaceFromRow } from '@/services/supabaseMappers';
 
 type Tab = 'tenants' | 'users' | 'overview';
 
@@ -55,6 +58,62 @@ function slugify(name: string) {
 }
 
 const COLOURS = ['#6366f1', '#0891b2', '#16a34a', '#d97706', '#db2777', '#7c3aed', '#0f766e', '#b45309'];
+
+async function createTenantWithAdmin(data: TenantFormData) {
+  const supabase = requireSupabase();
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+
+  if (!accessToken) {
+    throw new Error('Your session has expired. Please log in again.');
+  }
+
+  const response = await fetch(`${runtimeConfig.supabaseUrl}/functions/v1/create-tenant`, {
+    method: 'POST',
+    headers: {
+      apikey: runtimeConfig.supabaseAnonKey ?? '',
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: data.name,
+      slug: data.slug,
+      colour: data.colour,
+      plan: data.plan,
+      contactName: data.contactName,
+      contactEmail: data.contactEmail,
+      notes: data.notes,
+      settings: {
+        maxUsers: data.maxUsers,
+        maxWorkspaces: data.maxWorkspaces,
+        enableExcelImport: true,
+        enableEmailDelegation: true,
+        enableReports: true,
+      },
+      adminUsername: data.adminUsername || `${data.slug}_admin`,
+      adminDisplayName: data.adminDisplayName || 'Tenant Administrator',
+      adminEmail: data.adminEmail,
+      adminPassword: data.adminPassword,
+      sessionAccessToken: accessToken,
+    }),
+  });
+
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(result?.error || 'Failed to create tenant.');
+  }
+
+  if (!result?.tenant || !result?.workspace || !result?.profile) {
+    throw new Error('Tenant was created, but the server did not return the expected records.');
+  }
+
+  return {
+    tenant: tenantFromRow(result.tenant),
+    workspace: workspaceFromRow(result.workspace),
+    user: profileFromRow(result.profile),
+  };
+}
 
 interface TenantFormProps {
   initial?: TenantFormData;
@@ -231,6 +290,17 @@ export function PlatformAdminPage() {
 
   const handleCreateTenant = async (data: TenantFormData) => {
     if (!currentUser) return;
+    if (useSupabaseBackend) {
+      const { tenant, workspace, user } = await createTenantWithAdmin(data);
+
+      useTenantStore.setState(state => ({ tenants: [...state.tenants, tenant] }));
+      useWorkspaceStore.setState(state => ({ workspaces: [...state.workspaces, workspace] }));
+      useAuthStore.setState(state => ({ users: [...state.users, user] }));
+
+      setShowCreateModal(false);
+      return;
+    }
+
     const tenant = await createTenant({
       name: data.name, slug: data.slug, colour: data.colour, plan: data.plan,
       contactName: data.contactName, contactEmail: data.contactEmail, notes: data.notes,
