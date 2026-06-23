@@ -33,6 +33,7 @@ const PLATFORM_ADMIN_USERNAME = 'superadmin';
 const PLATFORM_ADMIN_PASSWORD = 'SuperAdmin123!';
 const TENANT_ADMIN_USERNAME   = 'admin';
 const TENANT_ADMIN_PASSWORD   = 'Admin123!';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ── Store interface ──────────────────────────────────────────
 
@@ -505,6 +506,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   async createUser(data) {
     if (useSupabaseBackend) {
+      if (!data.tenantId || !UUID_PATTERN.test(data.tenantId)) {
+        throw new Error('Select a valid tenant before creating a user. If this page was open before deployment, refresh and enter the tenant again.');
+      }
+
       const supabase = requireSupabase();
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;

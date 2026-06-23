@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useTenantStore } from '@/stores/tenantStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { Modal } from '@/components/common/Modal';
 import { Button } from '@/components/common/Button';
 import { Input, Select } from '@/components/common/Input';
@@ -204,6 +205,7 @@ export function PlatformAdminPage() {
   const navigate   = useNavigate();
   const { tenants, createTenant, updateTenant, deleteTenant, isSlugTaken } = useTenantStore();
   const { users, currentUser, enterTenant, createUser, deleteUser } = useAuthStore();
+  const { addWorkspace } = useWorkspaceStore();
 
   const [tab, setTab] = useState<Tab>('tenants');
   const [search, setSearch] = useState('');
@@ -234,6 +236,17 @@ export function PlatformAdminPage() {
       contactName: data.contactName, contactEmail: data.contactEmail, notes: data.notes,
       settings: { maxUsers: data.maxUsers, maxWorkspaces: data.maxWorkspaces, enableExcelImport: true, enableEmailDelegation: true, enableReports: true },
     }, currentUser.id);
+
+    addWorkspace({
+      tenantId: tenant.id,
+      name: 'Main Workspace',
+      type: 'company',
+      colour: tenant.colour,
+      currency: 'GBP',
+      isDefault: true,
+      isArchived: false,
+      hideFinanceFeatures: false,
+    });
 
     // Create the tenant admin user
     await createUser({
